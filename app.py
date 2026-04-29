@@ -5,7 +5,7 @@ import numpy as np
 
 # Adjust these labels based on your dataset's exact alphabetical folder names
 # You can check this by printing: train_data.class_indices in your notebook
-CLASS_NAMES = ['Improperly Worn', 'Masked', 'Unmasked'] 
+CLASS_NAMES = ['Improperly Worn', 'Unmasked', 'Masked'] 
 
 @st.cache_resource
 def load_trained_model():
