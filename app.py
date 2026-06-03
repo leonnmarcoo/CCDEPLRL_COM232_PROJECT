@@ -1,5 +1,5 @@
 import streamlit as st
-import tensorflow as tf
+from ultralytics import YOLO
 from PIL import Image
 import numpy as np
 
@@ -69,7 +69,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-CLASS_NAMES = ['Improperly Worn', 'Unmasked', 'Masked']
+# Display names mapped from dataset folder names
+# YOLOv8 sorts class folders alphabetically, so the order is:
+#   0: Improperly Wearing Facemask
+#   1: Not Wearing Facemask
+#   2: Wearing Facemask
+DISPLAY_NAMES = {
+    'Improperly Wearing Facemask': 'Improperly Worn',
+    'Not Wearing Facemask': 'Unmasked',
+    'Wearing Facemask': 'Masked',
+}
 
 CLASS_ICONS = {
     'Masked': '✅',
@@ -91,12 +100,12 @@ CLASS_MESSAGES = {
 
 @st.cache_resource
 def load_trained_model():
-    return tf.keras.models.load_model('mask_model.h5')
+    return YOLO('best.pt')
 
 with st.sidebar:
     st.markdown("### 📋 About")
     st.markdown(
-        "This app uses a **Convolutional Neural Network (CNN)** "
+        "This app uses a **YOLOv8 Classification Model** "
         "to detect whether a person is wearing a face mask properly."
     )
     
@@ -115,7 +124,7 @@ with st.sidebar:
     st.markdown(
         "1. Upload a photo or take one with your camera\n"
         "2. The image is resized to 128×128 pixels\n"
-        "3. The CNN analyzes the image\n"
+        "3. The YOLOv8 model analyzes the image\n"
         "4. A prediction with confidence score is displayed"
     )
 
@@ -132,7 +141,7 @@ try:
     model = load_trained_model()
 except Exception as e:
     st.error(
-        f"⚠️ Could not load the model. Make sure `mask_model.h5` "
+        f"⚠️ Could not load the model. Make sure `best.pt` "
         f"is in the project directory.\n\n**Error:** {e}"
     )
     st.stop()
@@ -183,14 +192,21 @@ if input_image is not None:
         st.markdown("#### 🔍 Analysis Result")
         
         with st.spinner("Analyzing..."):
-            img = input_image.resize((128, 128))
-            img_array = np.array(img) / 255.0
-            img_array = np.expand_dims(img_array, axis=0)
+            # YOLOv8 classification prediction
+            results = model.predict(input_image, imgsz=128, verbose=False)
+            probs = results[0].probs
             
-            predictions = model.predict(img_array, verbose=0)
-            predicted_class_idx = np.argmax(predictions, axis=1)[0]
-            confidence = np.max(predictions)
-            predicted_class_name = CLASS_NAMES[predicted_class_idx]
+            # Get the raw class name from model and map to display name
+            raw_class_name = model.names[probs.top1]
+            predicted_class_name = DISPLAY_NAMES.get(raw_class_name, raw_class_name)
+            confidence = float(probs.top1conf)
+            
+            # Build ordered class info for the breakdown
+            class_probs = []
+            for idx, raw_name in model.names.items():
+                display_name = DISPLAY_NAMES.get(raw_name, raw_name)
+                prob = float(probs.data[idx])
+                class_probs.append((display_name, prob))
         
         icon = CLASS_ICONS.get(predicted_class_name, '🔍')
         color_class = CLASS_COLORS.get(predicted_class_name, 'result-masked')
@@ -207,14 +223,13 @@ if input_image is not None:
         st.info(f"💡 {message}")
         
         with st.expander("📊 Confidence Breakdown"):
-            for i, class_name in enumerate(CLASS_NAMES):
-                prob = predictions[0][i]
+            for class_name, prob in class_probs:
                 st.progress(float(prob), text=f"{CLASS_ICONS.get(class_name, '')} {class_name}: {prob*100:.1f}%")
 
 st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 st.markdown(
     "<p style='text-align: center; color: #aaa; font-size: 0.85rem;'>"
-    "Built with Streamlit • CNN Face Mask Detection Project"
+    "Built with Streamlit • YOLOv8 Face Mask Detection Project"
     "</p>",
     unsafe_allow_html=True
 )

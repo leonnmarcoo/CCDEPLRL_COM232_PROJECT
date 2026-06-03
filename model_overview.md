@@ -1,8 +1,8 @@
-# Face Mask Detection — Improved Model Overview
+# Face Mask Detection — YOLOv8 Classification Model Overview
 
 ## Project Goal
 
-The goal of this project is to build a **Convolutional Neural Network (CNN)** that can look at a photo of a person's face and classify it into one of three categories:
+The goal of this project is to build a **YOLOv8 Classification Model** that can look at a photo of a person's face and classify it into one of three categories:
 
 - **Masked** — The person is wearing a face mask properly.
 - **Unmasked** — The person is not wearing any face mask.
@@ -14,131 +14,128 @@ The goal of this project is to build a **Convolutional Neural Network (CNN)** th
 
 The dataset consists of **535 images** split across the three classes. The images are divided into:
 
-- **Training set (80%):** 428 images — used to teach the model.
-- **Validation set (20%):** 107 images — used to test how well the model performs on images it has never seen before.
+- **Training set (80%):** ~428 images — used to teach the model.
+- **Validation set (20%):** ~107 images — used to test how well the model performs on images it has never seen before.
 
-This is a relatively **small dataset**, which makes overfitting (the model memorizing training images instead of learning general patterns) a major challenge throughout the project.
+The dataset is organized into folders matching YOLOv8's expected structure:
+
+```
+Dataset_YOLOv8/
+├── train/
+│   ├── Improperly Wearing Facemask/
+│   ├── Not Wearing Facemask/
+│   └── Wearing Facemask/
+└── val/
+    ├── Improperly Wearing Facemask/
+    ├── Not Wearing Facemask/
+    └── Wearing Facemask/
+```
+
+This is a relatively **small dataset**, which makes transfer learning from a pretrained model essential for achieving good performance.
 
 ---
 
 ## Model Architecture
 
-The model is a **Sequential CNN** built using TensorFlow/Keras. Below is a breakdown of each layer and its purpose.
+The model uses **YOLOv8 Nano Classification** (`yolov8n-cls`), a lightweight classification model from the Ultralytics YOLO family. Unlike the previous custom CNN approach, this model comes pretrained on **ImageNet** (1000 classes, ~1.2M images) and is fine-tuned on our face mask dataset.
 
-### Convolutional Layers
+### Why YOLOv8 Classification?
 
-```
-Conv2D(32 filters, 3×3 kernel, ReLU activation, L2 regularization)
-MaxPooling2D(2×2)
-Dropout(0.2)
+| Aspect | Custom CNN (Previous) | YOLOv8 Classification (Current) |
+|--------|----------------------|--------------------------------|
+| **Architecture** | 2-layer Conv2D + Dense | Modified CSPNet backbone with classification head |
+| **Parameters** | ~1.7M (untrained) | ~2.7M (pretrained on ImageNet) |
+| **Transfer Learning** | None | ImageNet pretrained weights |
+| **Feature Extraction** | Learns from scratch on 428 images | Leverages features learned from 1.2M images |
+| **Augmentation** | Manual ImageDataGenerator | Built-in (mosaic, mixup, HSV jitter, flip, etc.) |
+| **Training Optimizations** | Manual setup | Auto LR scheduling, early stopping, best checkpoint |
 
-Conv2D(64 filters, 3×3 kernel, ReLU activation, L2 regularization)
-MaxPooling2D(2×2)
-Dropout(0.2)
-```
+### Architecture Details
 
-- **Conv2D** is the core of a CNN. It slides small filters (3×3 windows) across the image to detect visual features like edges, textures, and shapes. The first layer learns simple features (e.g., lines and corners), while the second layer combines those into more complex patterns (e.g., the outline of a mask).
-- **ReLU activation** introduces non-linearity, allowing the network to learn complex patterns instead of just simple linear relationships.
-- **MaxPooling2D** reduces the size of the feature maps by keeping only the maximum value in each 2×2 region. This makes the model faster, reduces memory usage, and helps the model focus on the most important features rather than exact pixel positions.
+YOLOv8n-cls uses a **CSPNet (Cross Stage Partial Network)** backbone, which is significantly more powerful than a simple 2-layer CNN:
 
-### Classification Layers
+1. **Backbone**: CSPDarknet with cross-stage partial connections — efficiently extracts multi-scale features while keeping the model small.
+2. **Classification Head**: Global Average Pooling → Linear layer with Softmax — maps extracted features to 3 class probabilities.
 
-```
-Flatten()
-Dense(64 neurons, ReLU activation, L2 regularization)
-Dropout(0.4)
-Dense(3 neurons, Softmax activation)
-```
-
-- **Flatten** converts the 2D feature maps from the convolutional layers into a 1D list of numbers so that the Dense (fully connected) layers can process them.
-- **Dense(64)** is a fully connected layer that combines all the extracted features to learn the relationship between them and the three output classes.
-- **Dense(3, softmax)** is the output layer. It produces three probability scores (one for each class) that add up to 1.0. The class with the highest probability is the model's prediction.
+The key advantage is **transfer learning**: the backbone starts with weights trained on ImageNet, meaning it already knows how to detect edges, textures, shapes, and objects. We only need to fine-tune these features for our specific mask classification task.
 
 ---
 
 ## Techniques Used to Improve Generalization
 
-### 1. Data Augmentation
+### 1. Transfer Learning (Pretrained Weights)
 
-**What it does:** Creates modified versions of training images on-the-fly during each training cycle so the model sees slightly different images every time.
+**What it does:** Instead of training from random weights, the model starts with weights learned from classifying 1000 categories on 1.2 million ImageNet images.
 
-**Why it helps:** With only 428 training images, the model can easily memorize the exact images. Augmentation artificially increases the variety of training data without collecting new images, which forces the model to learn general features instead of specific ones.
+**Why it helps:** With only 428 training images, learning visual features from scratch is extremely difficult. Transfer learning provides a strong starting point — the model already understands basic visual concepts (edges, textures, shapes) and only needs to learn how to apply them to face masks.
 
-**Augmentations applied (training only):**
+### 2. Built-in Data Augmentation
 
-| Technique | Setting | What It Simulates |
-|---|---|---|
-| **Brightness Jitter** | ±20% | Different lighting conditions (indoor vs. outdoor, day vs. night) |
-| **Color/Saturation Shift** | Channel shift of 30 | Different camera sensors and white balance settings |
-| **Horizontal Flip** | 50% chance | The model should recognize a mask whether the person faces left or right |
-| **Mild Rotation** | Max ±10° | Natural head tilts when a person is not perfectly upright |
-| **Gaussian Blur** | 30% chance, mild intensity | Motion blur or lower-quality cameras |
+**What it does:** YOLOv8 automatically applies a suite of augmentations during training, including:
 
-**What was intentionally avoided:**
-- **No vertical flipping** — faces should always remain upright.
-- **No random erasing/cutout** — could block the mouth, nose, or chin which are the defining features for all three classes.
-- **No aggressive cropping/zooming** — could cut off the chin or nose area, making it impossible to tell "Masked" from "Improperly Worn."
+| Technique | What It Simulates |
+|-----------|-------------------|
+| **HSV Jitter** | Different lighting, white balance, and camera settings |
+| **Horizontal Flip** | Person facing left or right |
+| **Rotation** | Natural head tilts |
+| **Scale Variation** | Different distances from the camera |
+| **Translation** | Different positions in the frame |
+| **Mosaic** | Combining 4 images for context diversity |
+| **Mixup** | Blending two images for smoother decision boundaries |
 
-**Important:** These augmentations are applied **only to the training set**. The validation set receives only standard rescaling so that evaluation reflects real-world performance.
-
-### 2. L2 Regularization (Weight Decay)
-
-**What it does:** Adds a small penalty to the loss function based on how large the model's weights become. The penalty is `0.001 × sum of squared weights`.
-
-**Why it helps:** Without regularization, the model is free to assign very large weight values to memorize specific training images. L2 regularization forces the weights to stay small, which encourages the model to find simpler, more general patterns that work across many images — not just the training set.
-
-**Where it is applied:** On both Conv2D layers and the Dense(64) layer using `kernel_regularizer=regularizers.l2(0.001)`.
+**Why it helps:** These augmentations artificially increase the variety of training data, forcing the model to learn general patterns rather than memorizing specific images.
 
 ### 3. Dropout
 
-**What it does:** During each training step, a random percentage of neurons are temporarily turned off (set to zero). Different neurons are disabled each time.
+**What it does:** During training, 20% of neurons are randomly disabled in each forward pass.
 
-**Why it helps:** Without Dropout, the model can rely on a few specific neurons to memorize training data. By randomly disabling neurons, the model is forced to spread knowledge across many neurons, creating redundant pathways. This means the model doesn't break when it encounters new, unseen images.
+**Why it helps:** Prevents the model from over-relying on specific neurons, encouraging distributed and redundant feature representations that generalize better to unseen data.
 
-**Dropout rates used:**
-- **0.2 (20%)** after each convolutional block — mildly prevents over-reliance on specific feature maps.
-- **0.4 (40%)** after the Dense(64) layer — more aggressive since the dense layer is the most prone to memorization.
+### 4. Learning Rate Scheduling
 
-**Important:** Dropout is automatically turned off during validation and prediction, so the full model capacity is always used when making predictions.
+**What it does:** YOLOv8 uses a **warmup + cosine annealing** schedule:
+- **Warmup** (first 3 epochs): Learning rate gradually increases from near-zero to the target rate, preventing unstable early training.
+- **Cosine Annealing** (remaining epochs): Learning rate smoothly decreases following a cosine curve, allowing fine-grained optimization in later epochs.
 
-### 4. Separate Data Generators (Train vs. Validation)
+**Why it helps:** Prevents overshooting in early training and allows precise convergence in later epochs.
 
-**What it does:** Uses two different `ImageDataGenerator` objects — one with augmentations for training, and one with only rescaling for validation.
+### 5. Early Stopping
 
-**Why it helps:** If augmentations were also applied to the validation set, the validation accuracy would not reflect real-world performance. The validation set should always be a clean, unmodified representation of what the model will encounter in production.
+**What it does:** Training automatically stops if validation performance doesn't improve for 10 consecutive epochs (`patience=10`).
+
+**Why it helps:** Prevents overfitting by stopping training at the optimal point rather than continuing until the model memorizes the training data.
 
 ---
 
 ## Training Configuration
 
 | Setting | Value | Purpose |
-|---|---|---|
-| **Optimizer** | Adam | An adaptive optimizer that automatically adjusts the learning rate for each parameter. Good default choice for most tasks |
-| **Loss Function** | Categorical Crossentropy | Standard loss function for multi-class classification. Measures how far the predicted probabilities are from the true labels |
-| **Epochs** | 12 | Number of complete passes through the training data |
-| **Batch Size** | 32 | Number of images processed before updating the model's weights |
-| **Image Size** | 128 × 128 pixels | All images are resized to this standard size before being fed to the model |
+|---------|-------|---------|
+| **Base Model** | yolov8n-cls.pt | Nano classification model pretrained on ImageNet |
+| **Optimizer** | Adam | Adaptive optimizer with automatic per-parameter learning rate |
+| **Initial Learning Rate** | 0.001 | Starting learning rate before cosine annealing |
+| **Loss Function** | Cross Entropy | Standard loss for multi-class classification |
+| **Epochs** | 50 (max) | Maximum training epochs (early stopping may trigger sooner) |
+| **Patience** | 10 | Early stopping patience — stops if no improvement for 10 epochs |
+| **Batch Size** | 32 | Number of images processed per weight update |
+| **Image Size** | 128 × 128 pixels | All images resized to this standard size |
+| **Dropout** | 0.2 | 20% dropout for regularization |
 
 ---
 
 ## Results
 
-| Metric | Value |
-|---|---|
-| **Final Training Accuracy** | ~78.7% |
-| **Final Validation Accuracy** | ~72.9% |
-| **Best Validation Accuracy** | ~72.9% (Epoch 12) |
-
-The ~6% gap between training and validation accuracy shows the model is generalizing reasonably well given the small dataset size. The regularization techniques (L2 + Dropout) successfully reduced overfitting compared to the baseline model, which had a much larger gap (80%+ training vs. ~53% validation).
+*Run the notebook to populate results.*
 
 ---
 
 ## Summary
 
-This model demonstrates how a simple CNN can be improved for a small-dataset scenario using a combination of **data augmentation**, **L2 regularization**, and **Dropout**. These techniques work together to reduce overfitting:
+This model demonstrates how **transfer learning with YOLOv8** dramatically improves classification performance on small datasets compared to training a custom CNN from scratch. The key advantages are:
 
-- **Data augmentation** increases the effective size and variety of the training set.
-- **L2 regularization** keeps the model's weights small and prevents memorization.
-- **Dropout** forces the model to learn redundant, generalizable features.
+- **Transfer learning** provides a strong foundation of visual features learned from millions of images.
+- **Built-in augmentation** automatically increases training data variety without manual configuration.
+- **Automatic training optimizations** (LR scheduling, early stopping, best checkpoint) eliminate manual tuning.
+- **Simpler code** — the entire training pipeline is ~10 lines of code compared to ~50+ for the custom CNN approach.
 
-While the validation accuracy (~72.9%) shows there is room for improvement, the narrowed gap between training and validation performance confirms that the model is learning patterns that generalize to unseen data rather than simply memorizing the training set.
+The shift from a custom 2-layer CNN to YOLOv8 represents a move from "learning features from scratch" to "fine-tuning existing knowledge," which is the industry-standard approach for small-dataset image classification tasks.
