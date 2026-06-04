@@ -1,5 +1,4 @@
 import streamlit as st
-from ultralytics import YOLO
 from PIL import Image
 import numpy as np
 import av
@@ -121,6 +120,8 @@ CLASS_MESSAGES = {
 
 @st.cache_resource
 def load_trained_model():
+    from ultralytics import YOLO
+
     return YOLO('best.pt')
 
 with st.sidebar:
@@ -217,7 +218,14 @@ elif st.session_state.input_mode == 'live':
         'Improperly Worn': (255, 193, 7) # yellow
     }
 
-    import cv2
+    try:
+        import cv2
+    except Exception as e:
+        st.error(
+            "⚠️ Live detection needs OpenCV to be installed correctly in the deployment environment. "
+            f"**Error:** {e}"
+        )
+        st.stop()
 
     class FaceMaskProcessor(VideoProcessorBase):
         def __init__(self):
