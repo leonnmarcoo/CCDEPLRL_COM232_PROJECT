@@ -2,6 +2,8 @@ import streamlit as st
 from ultralytics import YOLO
 from PIL import Image
 import numpy as np
+import av
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 
 st.set_page_config(
     page_title="Face Mask Detector",
@@ -66,6 +68,25 @@ st.markdown("""
         margin: 1.5rem 0;
         border-radius: 2px;
     }
+
+    .live-status {
+        text-align: center;
+        padding: 1rem;
+        border-radius: 10px;
+        margin-top: 1rem;
+    }
+    .live-status-masked {
+        background: linear-gradient(135deg, #d4edda, #c3e6cb);
+        border: 2px solid #28a745;
+    }
+    .live-status-unmasked {
+        background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+        border: 2px solid #dc3545;
+    }
+    .live-status-improper {
+        background: linear-gradient(135deg, #fff3cd, #ffeeba);
+        border: 2px solid #ffc107;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -122,7 +143,7 @@ with st.sidebar:
     
     st.markdown("### ⚙️ How It Works")
     st.markdown(
-        "1. Upload a photo or take one with your camera\n"
+        "1. Upload a photo, take one with your camera, **or use live detection**\n"
         "2. The image is resized to 128×128 pixels\n"
         "3. The YOLOv8 model analyzes the image\n"
         "4. A prediction with confidence score is displayed"
@@ -146,20 +167,27 @@ except Exception as e:
     )
     st.stop()
 
-col1, col2 = st.columns(2)
-
-with col1:
-    upload_tab = st.button("📁 Upload Image", use_container_width=True, type="primary")
-with col2:
-    camera_tab = st.button("📷 Use Camera", use_container_width=True)
-
 if 'input_mode' not in st.session_state:
     st.session_state.input_mode = 'upload'
 
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    upload_tab = st.button("📁 Upload Image", use_container_width=True, type="primary" if st.session_state.input_mode == 'upload' else "secondary")
+with col2:
+    camera_tab = st.button("📷 Use Camera", use_container_width=True, type="primary" if st.session_state.input_mode == 'camera' else "secondary")
+with col3:
+    live_tab = st.button("🎥 Live Detection", use_container_width=True, type="primary" if st.session_state.input_mode == 'live' else "secondary")
+
 if upload_tab:
     st.session_state.input_mode = 'upload'
+    st.rerun()
 if camera_tab:
     st.session_state.input_mode = 'camera'
+    st.rerun()
+if live_tab:
+    st.session_state.input_mode = 'live'
+    st.rerun()
 
 st.markdown("")
 
@@ -174,10 +202,75 @@ if st.session_state.input_mode == 'upload':
     )
     if uploaded_file is not None:
         input_image = Image.open(uploaded_file).convert('RGB')
-else:
+elif st.session_state.input_mode == 'camera':
     camera_file = st.camera_input("Take a picture")
     if camera_file is not None:
         input_image = Image.open(camera_file).convert('RGB')
+elif st.session_state.input_mode == 'live':
+    st.markdown("#### 🎥 Real-Time Face Mask Detection")
+    st.caption("Your webcam feed is classified frame-by-frame. The overlay shows the current prediction.")
+
+    # Color map for overlay: BGR format for OpenCV
+    OVERLAY_COLORS = {
+        'Masked': (40, 167, 69),         # green
+        'Unmasked': (220, 53, 69),       # red
+        'Improperly Worn': (255, 193, 7) # yellow
+    }
+
+    import cv2
+
+    class FaceMaskProcessor(VideoProcessorBase):
+        def __init__(self):
+            self._model = load_trained_model()
+
+        def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+            img = frame.to_ndarray(format="bgr24")
+
+            # Convert BGR -> RGB PIL image for YOLO
+            pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            results = self._model.predict(pil_img, imgsz=128, verbose=False)
+            probs = results[0].probs
+
+            raw_name = self._model.names[probs.top1]
+            display_name = DISPLAY_NAMES.get(raw_name, raw_name)
+            confidence = float(probs.top1conf)
+
+            # Choose overlay color
+            color = OVERLAY_COLORS.get(display_name, (255, 255, 255))
+
+            # Draw semi-transparent banner at the top
+            h, w = img.shape[:2]
+            overlay = img.copy()
+            banner_h = 70
+            cv2.rectangle(overlay, (0, 0), (w, banner_h), color, -1)
+            cv2.addWeighted(overlay, 0.55, img, 0.45, 0, img)
+
+            # Draw label text
+            icon_text = {'Masked': 'MASKED', 'Unmasked': 'NO MASK', 'Improperly Worn': 'IMPROPER'}  
+            label = f"{icon_text.get(display_name, display_name)}  {confidence*100:.0f}%"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 1.2
+            thickness = 3
+            text_size = cv2.getTextSize(label, font, font_scale, thickness)[0]
+            text_x = (w - text_size[0]) // 2
+            text_y = (banner_h + text_size[1]) // 2
+
+            # Shadow for readability
+            cv2.putText(img, label, (text_x + 2, text_y + 2), font, font_scale, (0, 0, 0), thickness + 1, cv2.LINE_AA)
+            cv2.putText(img, label, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+            # Thin colored border around the entire frame
+            cv2.rectangle(img, (0, 0), (w - 1, h - 1), color, 4)
+
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+    webrtc_ctx = webrtc_streamer(
+        key="facemask-live",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=FaceMaskProcessor,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
 
 if input_image is not None:
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
